@@ -25,6 +25,18 @@
 .ack li{margin:4px 0}
 .ack a{text-decoration:underline;text-underline-offset:2px}
       h1{font-size:clamp(28px,4.5vw,40px);font-weight:800;margin:0 0 6px}
+      details.collapsible {
+  border: 1px solid #222; border-radius: 10px; background: #0b0b0b; margin: 14px 0;
+}
+details.collapsible > summary {
+  cursor: pointer; padding: 12px 14px; list-style: none; user-select: none; font-weight: 600;
+}
+details.collapsible > summary::-webkit-details-marker { display: none; }
+details.collapsible > summary::after {
+  content: "▸"; float: right; color: var(--muted); transition: transform .2s ease;
+}
+details.collapsible[open] > summary::after { content: "▾"; transform: translateY(1px); }
+details.collapsible .collapsible-body { padding: 0 14px 14px; }
       .nav{color:var(--muted)}
       .nav a{padding:2px 4px}
       .sep{padding:0 6px}
@@ -37,7 +49,15 @@
       article p + ul { margin-top: -10px; }
       article ul { margin: 6px 0 1em 1.2em; padding-left: 1.2em; }
       article [id] { scroll-margin-top: 16px; }
-      :target { background:#0a0a0a; outline:1px solid #222; border-radius:8px; transition:background .3s; }
+      :target {
+  animation: anchor-flash 4000ms ease-out 1;
+  border-radius: 8px;
+}
+@keyframes anchor-flash {
+  from { background: rgba(255, 214, 10, .25); box-shadow: 0 0 0 2px rgba(255,214,10,.35) inset; }
+  to   { background: transparent;            box-shadow: 0 0 0 0   transparent     inset; }
+}
+      
       .table-wrap{overflow:auto;margin:14px 0 22px}
     table.tron-ton{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
     table.tron-ton caption{caption-side:bottom;color:var(--muted);font-size:14px;padding-top:6px;text-align:left}
@@ -90,6 +110,35 @@
           <p>Somehow, DeFi on Tron ended up highly centralized… which, in a way, is logical: there’s very little capital in other protocols because there are only around 20 with TVL &gt;$1000, which is astonishing given Tron is an EVM-compatible chain (with quirks, sure, but let’s leave those aside here).</p>
 
           <p>Maybe developers are deterred by a moribund DeFi market on Tron or maybe it’s the total lack of developer support from Tron’s own side, <a href="https://github.com/TronLink/tronlink-extension/issues/313" target="_blank" rel="noopener" style="text-decoration: underline">where a single issue has been left open for 4(!) years</a>.</p>
+
+          <!-- Collapsible ZK-on-TRON note -->
+          <!-- Collapsible: ZK on TRON (human tone, no Q&A) -->
+<details class="collapsible">
+  <summary>For anyone who wants to dig deeper into why zk on TRON never really took off</summary>
+  <div class="collapsible-body">
+    <p>Long story short: zk on TRON never really worked beyond demos. Teams kept hitting execution/time limits, so anything serious was a grind.</p>
+
+    <p>The community, including the
+      <a href="https://www.zkbob.com/" target="_blank" rel="noopener" style="text-decoration: underline">zkBob</a>
+      folks, didn’t just say “please make it faster”. They rolled up their sleeves and opened two PRs to make zk verification actually usable:
+      <a href="https://github.com/tronprotocol/java-tron/pull/5507" target="_blank" rel="noopener" style="text-decoration: underline">#5507</a>
+      and
+      <a href="https://github.com/tronprotocol/java-tron/pull/5611" target="_blank" rel="noopener" style="text-decoration: underline">#5611</a>.
+      In plain English: they brought the code, benchmarks, packaging, and even an activation plan - basically, everything needed for a chain upgrade on a plate.</p>
+
+    <p>Core acknowledged the problem but didn’t merge the fixes, pointing to rollout risk and fee-model details. Later they filed a plan to move to a faster crypto backend -
+      <a href="https://github.com/tronprotocol/java-tron/issues/6374" target="_blank" rel="noopener" style="text-decoration: underline">issue #6374</a> -
+      which is still a plan, not mainnet reality.</p>
+
+    <p>The result was predictable: projects paused or left. A visible example is
+      <a href="https://forum.trondao.org/t/the-zkbob-pool-on-tron-will-sunset-on-october-29-2024/26270" target="_blank" rel="noopener" style="text-decoration: underline">zkBob sunsetting its TRON pool</a>,
+      explicitly citing that zk verifiers weren’t reliable to run.</p>
+
+    <p>My take: the community delivered an upgrade path; TRON kept it low priority. A whole category of apps never really had a shot.</p>
+  </div>
+</details>
+
+
 
           <p>I also think it’s worth introducing a metric like Stablecoin Market Cap / DeFi TVL to show how unusual Tron is.</p>
 

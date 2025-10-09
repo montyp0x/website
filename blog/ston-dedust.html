@@ -17,6 +17,15 @@ a:hover{text-decoration:underline}
 .wrap{max-width:var(--maxw);margin:0 auto;padding:40px 18px 80px}
 header{margin-bottom:28px}
 h1{font-size:clamp(28px,4.5vw,40px);font-weight:800;margin:0 0 6px}
+article [id] { scroll-margin-top: 16px; }
+:target {
+  animation: anchor-flash 4000ms ease-out 1;
+  border-radius: 8px;
+}
+@keyframes anchor-flash {
+  from { background: rgba(255, 214, 10, .25); box-shadow: 0 0 0 2px rgba(255,214,10,.35) inset; }
+  to   { background: transparent;            box-shadow: 0 0 0 0   transparent     inset; }
+}
 .nav{display:flex;flex-wrap:wrap;align-items:center;gap:12px;color:var(--muted)}
 .nav a{color:var(--text);padding:0}
 .sep{margin:0 4px;line-height:1;opacity:.6;user-select:none}
