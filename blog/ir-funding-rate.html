@@ -1,0 +1,1881 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>The Misplaced Anchor</title>
+  <meta name="description" content="Why crypto perp exchanges overcharge longs: tracing the IR component of perpetual funding rates from BitMEX 2017 to today." />
+
+  <meta name="color-scheme" content="dark light" />
+
+  <link rel="preload" as="image" href="/images/waifu-dance.gif" />
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+
+  <script>
+    (function(){
+      try{
+        var saved = localStorage.getItem("theme");
+        var sys = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        var theme = saved || sys || "dark";
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+      }catch(e){}
+    })();
+  </script>
+
+  <link rel="stylesheet" href="/assets/theme.css" />
+  <link rel="stylesheet" href="/assets/prose.css" />
+
+  <script>
+    window.MathJax = {
+      tex: { inlineMath: [['$','$'], ['\\(','\\)']], displayMath: [['$$','$$'], ['\\[','\\]']] },
+      svg: { fontCache: 'global' }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Ramil Amirov</h1>
+      <nav class="nav" aria-label="Primary">
+        <a href="/index.html">Home</a><span class="sep">·</span>
+        <a href="/stuff.html">Stuff</a><span class="sep">·</span>
+        <a href="/contact.html">Contact</a>
+      </nav>
+      <p class="muted">
+        <time datetime="2026-05-09">2026-05-09</time> — Why crypto perps overcharge longs
+      </p>
+    </header>
+    <aside class="ack" id="acknowledgements" aria-label="Acknowledgements">
+      <div class="eyebrow">Acknowledgements</div>
+      <p>
+        Thanks to my colleagues at <a href="https://chaoslabs.xyz" target="_blank" rel="noopener">Chaos Labs</a> —
+        André M. Rodrigues, Jonathan Feasby, Charlize Wang, and Shai Kritz — for thoughtful review.
+        Thanks to <a href="https://en.wikipedia.org/wiki/Tim_Wu" target="_blank" rel="noopener">Tim Wu</a>
+        for inspiration in writing this piece.
+      </p>
+    </aside>
+
+    <main>
+      <article>
+<h1
+id="the-misplaced-anchor-interest-rate-components-in-perpetual-futures-funding-mechanisms">The
+misplaced anchor: interest rate components in perpetual futures funding
+mechanisms</h1>
+<h2 id="abstract">Abstract</h2>
+<p>Futures contracts derive their fair price from the cost of carry —
+the net expense of holding the underlying asset until delivery. In
+TradFi, this cost is embedded directly in the futures price through the
+basis, which converges to zero at expiry via arbitrage. Perpetual
+futures, having no expiry, replace this convergence mechanism with a
+periodic funding rate. The standard funding rate formula, established by
+BitMEX in 2016, includes two components: a premium index that ties the
+perp price to spot, and an interest rate (IR) component that captures
+the cost of carry as a baseline payment from one side to the other.</p>
+<p>This paper traces the IR component from its theoretical roots in
+cost-of-carry pricing, through its implementation history — from the
+original dynamic rate sourced from Bitfinex lending markets to its
+entrenchment as a fixed 0.01% per 8 hours (~10.95% APR) in April 2017,
+and its subsequent, largely unquestioned adoption as the industry
+standard across centralized and decentralized exchanges. We evaluate
+this fixed anchor in light of prevailing capital costs observed in DeFi
+lending platforms, highlighting the mismatches and persistent structural
+distortions that emerge when the IR departs from the real cost of
+financing. We detail cases where specific exchanges have intentionally
+modified the IR for certain markets, and articulate criteria for a more
+principled calibration. Finally, we critically examine the standard
+funding rate formula employed by most exchanges, showing how both its
+structure and its embedded anchors can generate systematic mispricings
+and unintended market consequences.</p>
+<hr />
+<h2 id="futures-pricing-and-the-cost-of-carry">1. Futures pricing and
+the cost of carry</h2>
+<p>Let’s start with the futures definition: Futures - agreements to buy
+or sell assets at a set price on a set date in the future.</p>
+<p>The price of a futures contract is not arbitrary. In traditional
+markets, a well-established relationship links the futures price to the
+spot price of the underlying asset through the <strong>cost of
+carry</strong> - the total cost incurred by holding the asset from now
+until the delivery date.</p>
+<h3 id="the-cost-of-carry-model">1.1 The cost-of-carry model</h3>
+<p>For a futures contract expiring at time <span
+class="math inline">\(T\)</span>, the fair price is:</p>
+<p><span class="math display">\[
+F_T = S_0 \cdot e^{(r - y) \cdot T}
+\]</span></p>
+<p>where <span class="math inline">\(S_0\)</span> is the current spot
+price, <span class="math inline">\(r\)</span> is the financing rate (the
+cost of borrowing cash to purchase the asset) and <span
+class="math inline">\(y\)</span> is the yield generated by holding the
+asset (dividends, interest, staking rewards).</p>
+<p>The <strong>basis</strong> is the difference between the futures
+price and the spot price, and is also a direct expression of this carry
+cost:</p>
+<p><span class="math display">\[
+\text{Basis} = F_T - S_0 = S_0 \cdot \left(e^{(r - y) \cdot T} -
+1\right) \approx S_0 \cdot (r - y) \cdot T
+\]</span></p>
+<p>Arbitrageurs enforce this relationship through cash-and-carry trades:
+if the futures price is too high, they buy spot, finance the purchase,
+and sell futures, locking in a risk-free profit. This activity
+compresses the basis back to its fair value.</p>
+<p><strong>Example: S&amp;P 500 E-mini futures.</strong> In December
+2024, the S&amp;P 500 index closed at approximately 5,880. The effective
+federal funds rate was ~4.5%, and the index’s trailing dividend yield
+was ~1.3%. Using the continuous-yield approximation, the fair price of a
+3-month E-mini futures contract is:</p>
+<p><span class="math display">\[
+F_{0.25} = 5{,}880 \cdot e^{(0.045 - 0.013) \cdot 0.25} \approx 5{,}927
+\]</span></p>
+<p>The ~47-point premium (~0.8% over spot, or ~3.2% annualized) is the
+net cost of carry: the financing rate minus the dividends a spot holder
+would collect over the contract’s life. In practice, CME calculates
+index futures fair value using discrete expected dividends in index
+points rather than a continuous yield, but for contracts with broad,
+frequently-paying constituents like the S&amp;P 500, the approximation
+is close.</p>
+<p>The basis encodes an economic equivalence. A trader who holds the
+futures position instead of buying the index basket directly avoids
+tying up capital in spot (posting only initial margin), but forgoes
+dividends and implicitly pays the financing cost through the higher
+entry price. If the market quoted the March 2025 E-mini at 5,960 (above
+the ~5,927 fair value), an arbitrageur would buy the S&amp;P 500 basket
+on spot, sell the futures, collect dividends on the spot leg, and pocket
+the ~33-point excess when the basis converges at expiry.</p>
+<p>To anchor this with market data, we estimate a daily fair basis for
+the S&amp;P 500 E-mini using <span class="math inline">\(F = S
+e^{(r-y)T}\)</span> with <span class="math inline">\(r\)</span> proxied
+by the 13-week T-bill yield and <span class="math inline">\(y\)</span>
+estimated from the S&amp;P 500 total return index relative to the price
+index (historical implied dividend yield). We then compare that fair
+basis to the observed basis between front E-mini S&amp;P 500 futures and
+the spot S&amp;P 500 cash index.</p>
+<figure>
+<img src="ir-funding-resources/light/tradfi_es_basis_vs_carry_timeseries.png"
+alt="S&amp;P 500 E-mini basis: observed vs carry-model fair basis (daily)" />
+<figcaption aria-hidden="true">S&amp;P 500 E-mini basis: observed vs
+carry-model fair basis (daily)</figcaption>
+</figure>
+<p>The time-series structure is economically intuitive. The fair basis
+follows a sawtooth pattern because carry decays as the contract
+approaches quarterly expiry and resets after rolling into the next
+contract. The observed basis tracks the same pattern, while short-lived
+deviations reflect liquidity shocks, session timing differences, and
+temporary dislocations rather than a breakdown of the carry relation
+itself.</p>
+<p>Now let’s imagine how the pricing of futures on cryptocurrency assets
+would work: BTC has no native yield (<span class="math inline">\(y =
+0\)</span>), so the entire financing cost passes through as basis - a
+3-month BTC future at 3.6% USD rates would trade ~0.9% above spot. ETH,
+by contrast, generates ~2.4% APR from staking, which offsets most of the
+financing cost - the fair basis drops to ~0.3%. As the reader can
+notice, the existence of yield on the asset very strongly affects the
+pricing of the futures contract.</p>
+<p>A brief explanation of why futures and spot prices converge: as time
+passes, <span class="math inline">\(T\)</span> shrinks toward zero, and
+so does the cost of carry embedded in the basis. On the final day, with
+nothing left to finance and no dividends left to collect, the futures
+price and spot price must be equal. If this were not the case, then a
+trader could simultaneously buy one and sell the other for an immediate
+riskless profit.</p>
+<p>And this is the most important difference between traditional futures
+and perpetuals, which are widely used in crypto markets – the cost of
+carry lives in the price. The buyer of the futures contract pays a price
+that already incorporates the financing cost; the carry is fully
+expressed in the basis and fully amortized by expiry.</p>
+<h3 id="what-changes-with-perpetuals">1.2 What changes with
+perpetuals</h3>
+<p>Perpetual futures - contracts that track an asset’s spot price
+indefinitely through a funding mechanism rather than through delivery at
+expiry.</p>
+<p>As one can guess from the name of this type of derivative, perpetuals
+do not have an expiry date, which means there is no point in time when
+the perp and spot prices must converge; thus, perpetuals do not have a
+built-in mechanism for price convergence. This is what led to the
+creation of the funding rate mechanism.</p>
+<p>This mechanism was invented to substitute for expiry-driven
+convergence. It creates periodic (or continuous) payments between long
+and short position holders that incentivize the contract price to track
+the spot index. When the perpetual trades above spot, longs pay shorts -
+discouraging further buying and encouraging selling. When it trades
+below, shorts pay longs - the reverse.</p>
+<p>But this raises a design question that the rest of this paper
+explores: <em>how should the cost of carry be expressed in the price of
+a perpetual?</em></p>
+<hr />
+<h2 id="perpetuals-and-the-history-of-the-funding-rate">2. Perpetuals
+and the history of the funding rate</h2>
+<h3 id="the-bitmex-formula">2.1 The BitMEX formula</h3>
+<p>BitMEX launched the XBTUSD perpetual swap in May 2016 - the first
+futures contract with no expiry date. Their funding rate formula
+consists of two components:</p>
+<p><span class="math display">\[
+F = \bar{P} + \text{clamp}(I - \bar{P},\ -0.05\%,\ +0.05\%)
+\]</span></p>
+<p>The <strong>premium index</strong> <span
+class="math inline">\(\bar{P}\)</span> measures how far the perpetual’s
+price deviates from the spot index. It is computed from the order book -
+not from the mid-price, but from the average execution price for a
+meaningful notional size (the <em>Impact Margin Notional</em>) on each
+side:</p>
+<p><span class="math display">\[
+P = \frac{\max(0,\ \text{Impact Bid} - \text{Index}) - \max(0,\
+\text{Index} - \text{Impact Ask})}{\text{Index}}
+\]</span></p>
+<p>This premium is sampled periodically and averaged over the funding
+interval to produce <span class="math inline">\(\bar{P}\)</span>.</p>
+<p>The <strong>interest rate</strong> <span
+class="math inline">\(I\)</span> was designed to capture the
+cost-of-carry baseline - exactly the financing cost we discussed in
+Section 1. BitMEX defined it as:</p>
+<p><span class="math display">\[
+I = \frac{\text{Interest Quote Index} - \text{Interest Base
+Index}}{\text{Funding Interval}}
+\]</span></p>
+<p>For XBTUSD, the Interest Quote Index represented the daily cost of
+borrowing the quote currency (USD), and the Interest Base Index
+represented the cost of borrowing the base currency (BTC/XBT). The
+Funding Interval was 3 (three 8-hour windows per day).</p>
+<p>The <strong>clamp</strong> function limits the interaction between
+the two components. The term <span class="math inline">\((I -
+\bar{P})\)</span> is bounded to <span class="math inline">\(\pm
+0.05\%\)</span>, creating a “dead zone” where small premium fluctuations
+have no effect on the funding rate; it simply becomes equal to <span
+class="math inline">\(I\)</span>. Outside the dead zone, the premium
+dominates, but the clamp still shifts the result by up to <span
+class="math inline">\(\pm 0.05\%\)</span> relative to a pure premium
+formula. The clamping function also creates its own problems and
+nuances; we will also discuss them later.</p>
+<p>Let us also expand a bit on the topic of the parallels between spot
+and perp, namely, why the IR must be involved in payments from one side
+to the other. A perpetual position is economically equivalent to a
+leveraged spot trade, and the IR reflects the financing asymmetry
+between the two sides.</p>
+<p>A trader who is <em>long</em> a BTC perpetual holds the same exposure
+as someone who borrows USD, buys BTC on spot, and holds it. Whether the
+USD is explicitly borrowed or simply deployed (forgoing yield on a
+risk-free alternative), the long side carries a financing cost equal to
+the USD interest rate.</p>
+<p>A trader who is <em>short</em> a BTC perpetual holds the same
+exposure as someone who borrows BTC, sells it for USD, and holds the USD
+proceeds. The short side pays the BTC borrow rate but earns the USD rate
+on the cash received.</p>
+<p>The net carry difference between the two sides is:</p>
+<p><span class="math display">\[
+\text{carry differential} = r_{\text{USD}} - r_{\text{BTC}}
+\]</span></p>
+<p>Suppose the USD rate is 3.6% APR and the BTC borrow rate is 0.5% APR.
+The long is structurally “paying” 3.6% for financing; the short is
+earning 3.6% on USD and paying 0.5% for the BTC loan - a net position of
++3.1%. Even when the perpetual trades exactly at the spot price (premium
+= 0), the long side is worse off by the rate differential. Without an IR
+in the funding formula, this asymmetry would go uncompensated, and the
+market would adjust by pushing the perpetual price below spot -
+reintroducing carry into the basis, which defeats the purpose of the
+tethering mechanism.</p>
+<p>The IR resolves this by charging longs and paying shorts a baseline
+rate that approximates the carry differential, keeping the perpetual
+price centered on spot.</p>
+<h3 id="theoretical-ground">2.2 Theoretical ground</h3>
+<p>For our purpose, Ackerer et al. (2024) [1] provide a theoretical
+benchmark that pins down one design fact: the interest term in funding
+is the carry term in a no-arbitrage model. In their linear-perpetual
+setup, long cash flow is</p>
+<p><span class="math display">\[
+\Delta C_{t+1}^{\text{long}} = (f_{t+1}-f_t) - \kappa_t(f_t-x_t) -
+\iota_t x_t,
+\]</span></p>
+<p>where: - <span class="math inline">\(\Delta
+C_{t+1}^{\text{long}}\)</span> is the one-period cash flow to a long
+position from <span class="math inline">\(t\)</span> to <span
+class="math inline">\(t+1\)</span>. - <span
+class="math inline">\(f_t\)</span> is the perpetual futures price at
+time <span class="math inline">\(t\)</span>. - <span
+class="math inline">\(x_t\)</span> is the spot price of the underlying
+at time <span class="math inline">\(t\)</span>. - <span
+class="math inline">\(\kappa_t\)</span> is the premium-reversion
+(anchoring) coefficient applied to basis <span
+class="math inline">\((f_t-x_t)\)</span>. - <span
+class="math inline">\(\iota_t\)</span> is the funding interest factor
+applied to the spot notional.</p>
+<p>and, under no-arbitrage conditions, the equalizing interest
+specification that keeps perpetual and spot coincident is</p>
+<p><span class="math display">\[
+\iota_t = \frac{r_{a,t}-r_{b,t}}{1+r_{b,t}}
+\]</span></p>
+<p>where: - <span class="math inline">\(r_{a,t}\)</span> is the
+one-period financing (risk-free) rate of quote currency <span
+class="math inline">\(a\)</span> over <span
+class="math inline">\([t,t+1]\)</span>. - <span
+class="math inline">\(r_{b,t}\)</span> is the one-period financing
+(risk-free) rate of base currency <span class="math inline">\(b\)</span>
+over <span class="math inline">\([t,t+1]\)</span>. - the denominator
+<span class="math inline">\((1+r_{b,t})\)</span> is the discrete-time
+compounding adjustment implied by covered interest parity; in continuous
+time this adjustment collapses, giving <span
+class="math inline">\(\iota_t=r_{a,t}-r_{b,t}\)</span>.</p>
+<p>This equation (Corollary 1 from their paper) is the formal statement
+behind our thesis: IR must participate in the formula and is equal to
+the difference of risk-free rates.</p>
+<p>The practical implication for this report is direct. The premium
+component can anchor short-horizon deviations of perp from spot, but the
+IR component is the part that embeds structural carry. If IR does not
+track the underlying rate spread, the missing carry does not disappear;
+it re-enters the system as persistent basis distortion or a one-sided
+transfer in funding.</p>
+<p>Therefore, we have a theoretical justification for the inclusion of
+IR in the funding rate formula. Next, we will consider how different
+exchanges implement this formula and its components in practice.</p>
+<h3 id="the-dynamic-phase-and-the-fixation">2.3 The dynamic phase and
+the fixation</h3>
+<p>In its initial implementation, BitMEX sourced both interest rate
+indices from the Bitfinex margin lending market - the largest
+peer-to-peer crypto lending venue at the time. The IR was
+<em>dynamic</em>, fluctuating with real borrowing costs for USD and BTC.
+Unfortunately, in April 2017, due to banking disruptions at Bitfinex
+that made overnight lending rates unreliable, BitMEX froze the IR at a
+fixed value:</p>
+<blockquote>
+<p>“To arrive at this number, we calculated the average difference
+between the Bitfinex daily USD and Bitcoin lending rates for a 12 month
+period ending 31 March 2017 to arrive at the positive 0.03% rate.” —
+BitMEX Blog, April 2017 [2]</p>
+</blockquote>
+<p>The resulting constant:</p>
+<ul>
+<li>Interest Quote Index: <strong>0.06% daily</strong></li>
+<li>Interest Base Index: <strong>0.03% daily</strong></li>
+<li>Difference: <span class="math inline">\(0.03\% / 3 =
+\textbf{0.01\%}\)</span> per 8-hour interval</li>
+<li>Annualized: <span class="math inline">\(0.01\% \times 3 \times
+365.25 \approx \textbf{10.95\%}\)</span> APR</li>
+</ul>
+<p>The <span class="math inline">\(0.06\%\)</span> / <span
+class="math inline">\(0.03\%\)</span> daily numbers from BitMEX (i.e.,
+about <strong>21.9%</strong> and <strong>10.95%</strong> APR) implied by
+Bitfinex margin lending in 2016–17 are plausible but eye-popping. For
+context: crypto-collateralized lending rates during that time were
+structurally elevated due to thin USD on/off-ramps and high-volatility
+collateral.</p>
+<p>BitMEX described this as temporary: “when the deposits and
+withdrawals of fiat and Bitcoin are operating normally, we will select
+an appropriate exchange from which to source overnight USD and Bitcoin
+rates”. However, the “appropriate exchange” was never selected, and this
+constant remained with us.</p>
+<h3 id="the-industry-standard">2.4 The industry standard</h3>
+<p>What started as a BitMEX workaround became the industry template.
+Almost every major exchange that launched perpetual contracts after
+BitMEX adopted the same formula and the same fixed IR:</p>
+<table>
+<colgroup>
+<col style="width: 26%" />
+<col style="width: 12%" />
+<col style="width: 18%" />
+<col style="width: 44%" />
+</colgroup>
+<thead>
+<tr>
+<th>Exchange</th>
+<th>Type</th>
+<th>IR (8h)</th>
+<th>Documentation language</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Binance</td>
+<td>CEX</td>
+<td>0.01%</td>
+<td>“The interest rate is fixed at 0.03% daily by default”</td>
+</tr>
+<tr>
+<td>Bybit</td>
+<td>CEX</td>
+<td>0.01%</td>
+<td>“Interest rate is fixed at 0.03% per day”</td>
+</tr>
+<tr>
+<td>Hyperliquid</td>
+<td>DEX</td>
+<td>0.01%</td>
+<td>“For consistency with CEXs, predetermined at 0.01% every 8
+hours”</td>
+</tr>
+<tr>
+<td>OKX</td>
+<td>CEX</td>
+<td>0.01%</td>
+<td>“Interest rate = 0.03% / (24 / Settlement interval)”</td>
+</tr>
+<tr>
+<td>Extended</td>
+<td>DEX</td>
+<td>0.01%</td>
+<td>“Set at 0.01% per 8 hours for consistency with CEXs”</td>
+</tr>
+<tr>
+<td>Paradex</td>
+<td>DEX</td>
+<td>0.01%</td>
+<td>“Interest Rate = 0.01%” (continuous accrual, 8h rate)</td>
+</tr>
+<tr>
+<td>Variational</td>
+<td>DEX</td>
+<td>0.01%</td>
+<td>“Interest rate is fixed at 0.00125% / hour” (= 0.01%/8h)</td>
+</tr>
+<tr>
+<td>EdgeX</td>
+<td>DEX</td>
+<td>0.01%</td>
+<td>Preserves Quote/Base decomposition in formula but does not disclose
+source rates</td>
+</tr>
+</tbody>
+</table>
+<p>Binance copied the BitMEX formula, Bybit copied Binance, and DEX
+protocols copied CEXs, explicitly citing “consistency” as the reason. As
+a result, we have a situation where a single 12-month average from
+Bitfinex lending markets in 2016–2017 became a universal constant
+embedded in almost every major perpetual contract across the
+industry.</p>
+<hr />
+<h2 id="why-do-we-need-ir-at-all">3. Why do we need IR at all?</h2>
+<p>The previous section showed that a fixed IR has propagated through
+the industry without recalibration. A natural question follows: is the
+IR component necessary in the first place? Several major venues operate
+without an explicit fixed IR anchor. What changes when this term is
+removed from the formula?</p>
+<h3 id="two-separate-problems">3.1 Two separate problems</h3>
+<p>The funding mechanism is asked to solve two distinct problems at
+once.</p>
+<p>The first is <strong>price tethering</strong>. A perpetual contract
+is a derivative; its utility depends on tracking the price of the
+underlying asset. If the perpetual price consistently drifts from spot,
+the contract stops functioning as a reliable instrument for hedging or
+speculation.</p>
+<p>The second is <strong>cost-of-carry embedding</strong>. As discussed
+before, a long perpetual position is economically equivalent to a
+financed spot purchase, and this financing has a cost. This cost cannot
+simply be ignored; if it is not separately expressed in the formula,
+then it re-emerges as a persistent basis, distorting the premium signal.
+Carry embedding is a design preference: the contract works without it,
+but the price signal becomes less interpretable.</p>
+<p>The standard BitMEX formula bundles both into one mechanism - the
+premium component handles tethering, the IR handles carry. However,
+there may exist other interpretations of this mechanism, which still
+ignore the cost of carry, and this can exist if we accept a consistently
+small deviation of the perp price from the spot as normal. In the
+following section, we will consider a couple of examples of exchanges
+that have decided not to use any IR at all in their funding rate
+mechanism.</p>
+<h3 id="tethering-works-without-ir">3.2 Tethering works without IR</h3>
+<p>The premium component alone is sufficient to keep the perpetual price
+near the spot index. When the perpetual trades above spot, funding turns
+positive (longs pay shorts), creating sell pressure. When it trades
+below, funding turns negative (shorts pay longs), creating buy pressure.
+As the reader can notice, this mechanism does not require a fixed IR
+term, since it operates directly on observed price deviation.</p>
+<p>Deribit demonstrates this. Its funding formula contains no IR:</p>
+<p><span class="math display">\[
+F = \max(0.025\%,\ P) + \min(-0.025\%,\ P)
+\]</span></p>
+<p>When the premium is within <span class="math inline">\(\pm
+0.025\%\)</span>, a damper reduces funding to exactly zero. The contract
+remains tightly tethered to spot without a positive IR anchor.</p>
+<p>In Crypto.com’s mechanism, let <span
+class="math inline">\(\bar{P}_{4h}\)</span> denote the average premium
+over a 4-hour calculation window. The published interval rate is
+premium-only:</p>
+<p><span class="math display">\[
+R_{4h} = \bar{P}_{4h}
+\]</span></p>
+<p>Funding is then settled hourly over the next four hours at
+one-quarter of that interval value:</p>
+<p><span class="math display">\[
+F_{1h} = \frac{R_{4h}}{4} = \frac{\bar{P}_{4h}}{4}
+\]</span></p>
+<p>So in this specification, there is no separate fixed IR anchor and no
+clamp term; carry is expressed through the premium path itself.</p>
+<h3 id="similar-mean-funding-different-formula-mechanics">3.3 Similar
+mean funding, different formula mechanics</h3>
+<p>Now let’s examine the data on funding rates from various venues; for
+comparability, all funding series are normalized to 8-hour-equivalent
+rates:</p>
+<ul>
+<li>Binance and Bybit: native 8-hour settlements (direct)</li>
+<li>Deribit: hourly funding summed into 8-hour realized windows</li>
+<li>Crypto.com: hourly settled funding summed into 8-hour realized
+windows</li>
+<li>Hyperliquid: hourly funding summed into 8-hour realized windows</li>
+<li>Lighter: hourly funding signed by direction and summed into 8-hour
+realized windows</li>
+</ul>
+<p>Firstly, let’s focus on the longest window across CEXs for the BTC
+market: <strong>01 Jan 2022 – 07 May 2026</strong></p>
+<table>
+<colgroup>
+<col style="width: 14%" />
+<col style="width: 10%" />
+<col style="width: 12%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+</colgroup>
+<thead>
+<tr>
+<th>Venue</th>
+<th>Mean APR</th>
+<th>Median APR</th>
+<th>Share at 0.01% (8h)</th>
+<th>Share at 0.00% (8h)</th>
+<th>P05 funding (8h)</th>
+<th>P95 funding (8h)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Binance</td>
+<td>6.71%</td>
+<td>6.72%</td>
+<td>30.06%</td>
+<td>1.03%</td>
+<td>-0.004541%</td>
+<td>0.013079%</td>
+</tr>
+<tr>
+<td>Bybit</td>
+<td>6.82%</td>
+<td>8.97%</td>
+<td>39.06%</td>
+<td>0.73%</td>
+<td>-0.006985%</td>
+<td>0.014474%</td>
+</tr>
+<tr>
+<td>Deribit</td>
+<td>4.94%</td>
+<td>0.91%</td>
+<td>0.48%</td>
+<td>18.84%</td>
+<td>-0.003657%</td>
+<td>0.025711%</td>
+</tr>
+<tr>
+<td>Crypto.com</td>
+<td>4.01%</td>
+<td>1.26%</td>
+<td>0.61%</td>
+<td>1.20%</td>
+<td>-0.015646%</td>
+<td>0.030995%</td>
+</tr>
+</tbody>
+</table>
+<figure>
+<img src="ir-funding-resources/light/btc_funding_apr_30d_2022_2026.png"
+alt="BTC Funding APR (30-day rolling mean) by venue (01 Jan 2022 – 07 May 2026)" />
+<figcaption aria-hidden="true">BTC Funding APR (30-day rolling mean) by
+venue (01 Jan 2022 – 07 May 2026)</figcaption>
+</figure>
+<h4 id="btc-six-venue-comparison-2025-05-08-2026-05-08-utc">(BTC)
+Six-venue comparison (<strong>2025-05-08 – 2026-05-08</strong> UTC)</h4>
+<table>
+<colgroup>
+<col style="width: 14%" />
+<col style="width: 10%" />
+<col style="width: 12%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+</colgroup>
+<thead>
+<tr>
+<th>Venue</th>
+<th>Mean APR</th>
+<th>Median APR</th>
+<th>Share at 0.01% (8h)</th>
+<th>Share at 0.00% (8h)</th>
+<th>P05 funding (8h)</th>
+<th>P95 funding (8h)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Binance</td>
+<td>3.67%</td>
+<td>4.02%</td>
+<td>13.50%</td>
+<td>1.73%</td>
+<td>-0.005613%</td>
+<td>0.010000%</td>
+</tr>
+<tr>
+<td>Bybit</td>
+<td>4.14%</td>
+<td>4.27%</td>
+<td>22.81%</td>
+<td>1.28%</td>
+<td>-0.004746%</td>
+<td>0.010000%</td>
+</tr>
+<tr>
+<td>Deribit</td>
+<td>4.32%</td>
+<td>1.11%</td>
+<td>0.09%</td>
+<td>17.88%</td>
+<td>-0.001932%</td>
+<td>0.017911%</td>
+</tr>
+<tr>
+<td>Crypto.com</td>
+<td>3.26%</td>
+<td>3.28%</td>
+<td>0.82%</td>
+<td>0.64%</td>
+<td>-0.013237%</td>
+<td>0.019706%</td>
+</tr>
+<tr>
+<td>Hyperliquid</td>
+<td>8.37%</td>
+<td>10.54%</td>
+<td>35.68%</td>
+<td>0.18%</td>
+<td>-0.006339%</td>
+<td>0.020824%</td>
+</tr>
+<tr>
+<td>Lighter</td>
+<td>7.88%</td>
+<td>10.52%</td>
+<td>0.36%</td>
+<td>0.55%</td>
+<td>-0.005600%</td>
+<td>0.014725%</td>
+</tr>
+</tbody>
+</table>
+<h4 id="eth-six-venue-comparison-2025-05-08-2026-05-08-utc">(ETH)
+Six-venue comparison (<strong>2025-05-08 – 2026-05-08</strong> UTC)</h4>
+<table>
+<colgroup>
+<col style="width: 14%" />
+<col style="width: 10%" />
+<col style="width: 12%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+</colgroup>
+<thead>
+<tr>
+<th>Venue</th>
+<th>Mean APR</th>
+<th>Median APR</th>
+<th>Share at 0.01% (8h)</th>
+<th>Share at 0.00% (8h)</th>
+<th>P05 funding (8h)</th>
+<th>P95 funding (8h)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Binance</td>
+<td>3.35%</td>
+<td>4.01%</td>
+<td>14.60%</td>
+<td>0.91%</td>
+<td>-0.007017%</td>
+<td>0.010000%</td>
+</tr>
+<tr>
+<td>Bybit</td>
+<td>3.68%</td>
+<td>4.36%</td>
+<td>25.36%</td>
+<td>0.91%</td>
+<td>-0.006726%</td>
+<td>0.010000%</td>
+</tr>
+<tr>
+<td>Deribit</td>
+<td>1.33%</td>
+<td>0.11%</td>
+<td>0.36%</td>
+<td>26.92%</td>
+<td>-0.004725%</td>
+<td>0.010025%</td>
+</tr>
+<tr>
+<td>Crypto.com</td>
+<td>0.65%</td>
+<td>0.95%</td>
+<td>0.55%</td>
+<td>0.64%</td>
+<td>-0.016646%</td>
+<td>0.016821%</td>
+</tr>
+<tr>
+<td>Hyperliquid</td>
+<td>8.19%</td>
+<td>10.41%</td>
+<td>33.21%</td>
+<td>0.46%</td>
+<td>-0.007026%</td>
+<td>0.022043%</td>
+</tr>
+<tr>
+<td>Lighter</td>
+<td>8.66%</td>
+<td>10.52%</td>
+<td>0.64%</td>
+<td>0.18%</td>
+<td>-0.007100%</td>
+<td>0.022725%</td>
+</tr>
+</tbody>
+</table>
+<p>Here, the reader’s eyes may glaze over all this data in the table,
+because it is very ambiguous, as we touch upon several issues at once:
+1. The difference (or lack thereof) in mean funding rate between
+exchanges 2. The presence (or absence) of arbitrage in the funding rate
+(the difference between the mean APR still exists) 3. The columns “share
+at 0.01%”</p>
+<p>We will analyze these issues one by one. Let’s start by thinking
+about the logic of arbitrage, and how it is connected with the formula
+in this case. Let’s imagine that we have an absolutely ideal market and
+there are no difficulties or risks in buying and selling assets on all
+of the above-mentioned platforms and on the spot. This is exactly the
+case considered earlier in section 2.2, where we discussed what the cost
+of carry should be. De jure, this is how it should work: if there is an
+opportunity to make a logically identical trade on spot, then
+arbitrageurs should use this opportunity and bring the market into
+equilibrium.</p>
+<p>Moreover, in an ideal market, the participation of IR in the funding
+rate formula has absolutely no impact on the final situation in the
+market. The only thing IR influences is the price of the perp, but even
+this is absolutely unimportant. Let’s analyze in more detail why this is
+so. Let’s consider a case where IR equals some constant that does not
+match the real cost of carry. What will happen in this case? If IR is a
+constant, then the only thing that links the perp and spot prices is the
+premium. At the same time, as the market is ideal, all its participants
+know the real cost of carry and therefore can accurately assess the
+difference between the constant and the true value. If such a difference
+exists (and by the conditions of our thought experiment, it does),
+that’s an opportunity for arbitrage, which will be executed immediately.
+After this arbitrage is executed, we will get a basis that reflects this
+cost of carry. Thus, setting the correct value for IR in no way
+influences the final market, since the market can assess the true price
+of the perp, and can also trade at this price safely. For greater
+clarity, the reader is invited to assume IR as some huge value, and to
+think about what the basis would be in this case. The only problem with
+this approach is that we move away from the definition of perpetual
+futures, because by definition the perp price should equal the spot
+price — or rather, the average basis over a long horizon should tend to
+zero. Otherwise, it is not a perp, but a perp with a deviation.</p>
+<p>However, we do not live in an ideal world, and our market is not
+ideal either; the various IRs and formulas chosen by exchanges do affect
+the final result. Despite the imperfections of our market, the attentive
+reader can see here, in the BTC market, that formula mechanics do not
+influence the mean APR for CEXs, because arbitrageurs strongly influence
+this market and balance out the funding rate. At the same time, in the
+second-largest market — the ETH market — one can notice that on CEXs
+that do not have a hardcoded funding rate offset, the final funding rate
+is significantly lower than at their competitors with the outdated
+formula.</p>
+<p>Furthermore, perp DEX funding remains materially above major CEX
+means for both BTC and ETH in this window. Why is that? The author has
+several hypotheses:</p>
+<ol type="1">
+<li>Demand composition skew. DEX users likely skew more toward
+directional retail longs with a higher risk appetite. Fewer
+institutional hedgers and basis traders mean the buy-side pressure that
+generates positive funding isn’t offset as effectively. To prove this
+point, we can take a look at the biggest pool-based perp DEX - Jupiter.
+Here, traders are trading not against each other but against the JLP
+pool, so there is no binding relationship between the long and short
+open interest.</li>
+</ol>
+<figure>
+<img src="ir-funding-resources/light/jup_oi.png"
+alt="Jupiter OI (07 May 2025 – 06 May 2026)" />
+<figcaption aria-hidden="true">Jupiter OI (07 May 2025 – 06 May
+2026)</figcaption>
+</figure>
+<p>As the reader can observe on this chart, at any point in time, long
+OI is significantly larger than short OI.</p>
+<ol start="2" type="1">
+<li>Arbitrage friction. Cross-venue basis trades (short DEX perp, long
+CEX spot or perp) require capital parked on-chain, smart contract risk
+exposure, bridge/withdrawal latency, and often worse capital efficiency
+(no cross-margining with spot). These frictions widen the band within
+which funding rates can diverge before arbitrage becomes profitable.
+This is exactly what we talked about earlier regarding the imperfection
+of our market; at the moment, using perp DEX can be risky.</li>
+<li>Liquidity feedback loop. Higher funding attracts short-side
+liquidity (basis traders), but if the friction cost exceeds the spread,
+the equilibrium funding rate stabilizes above the CEX level rather than
+converging to it. The DEX premium is then a persistent friction premium,
+not a transient dislocation.</li>
+</ol>
+<p>Having discussed the first two issues, we move on to the third: the
+0.01% column. This is a very important column that highlights a problem
+we have not addressed before: the clamp. Aside from the IR-setting
+issue, the formula includes a clamp that significantly affects the final
+funding rate. Again, returning to our idea of an ideal market, if the
+market were ideal, the clamp would not matter, because the market would
+move the perp price to what would be fair.</p>
+<p>Let us return to the real world and consider the problems and
+consequences of using the clamp for exchanges.</p>
+<hr />
+<h2 id="pathologies-of-the-standard-irclamp-design">4. Pathologies of
+the standard IR+clamp design</h2>
+<h3 id="how-the-formula-behaves">4.1 How the formula behaves</h3>
+<p>If the IR overcharges relative to the true financing cost, the market
+has one channel to correct: the premium component. When the perpetual
+price is pushed below the spot index, the premium turns negative, which
+reduces the total funding rate below the IR baseline.</p>
+<p>But this correction is not straightforward, because the clamp
+function makes the relationship between premium and funding rate
+non-linear. Recall the three regimes:</p>
+<ul>
+<li><strong>Dead zone</strong> (<span class="math inline">\(-0.04\% \leq
+P \leq +0.06\%\)</span>): <span class="math inline">\(F =
+0.01\%\)</span>, regardless of <span class="math inline">\(P\)</span>.
+The premium can move freely within this range without affecting funding
+at all.</li>
+<li><strong>Below dead zone</strong> (<span class="math inline">\(P &lt;
+-0.04\%\)</span>): <span class="math inline">\(F = P + 0.05\%\)</span>.
+Funding drops below 0.01%, and each additional basis point of negative
+premium translates one-to-one into lower funding.</li>
+<li><strong>Above dead zone</strong> (<span class="math inline">\(P &gt;
++0.06\%\)</span>): <span class="math inline">\(F = P - 0.05\%\)</span>.
+Funding rises above 0.01%, tracking the premium.</li>
+</ul>
+<p>This means the dead zone acts as a <strong>barrier</strong>. When the
+equilibrium financing cost is below the IR, which, as we have shown, is
+the typical condition, the market must push the premium <em>below
+-0.04%</em> before the funding rate begins to decline at all. A premium
+of -0.03% produces the same funding rate as a premium of +0.05%: both
+yield exactly 0.01%. The market must overcome a 4-basis-point threshold
+just to begin correcting the overcharged IR. And this, in practice,
+turns out to be unachievable; the market does not manage to control the
+price of the perp so confidently, and as a result, we have the following
+situation:</p>
+<figure>
+<img src="ir-funding-resources/light/btc_formula_family_distribution_2022_2026.png"
+alt="BTC funding rate distribution by formula family" />
+<figcaption aria-hidden="true">BTC funding rate distribution by formula
+family</figcaption>
+</figure>
+<p>This graph speaks for itself; the difference in distribution between
+different types of formulas is visible to the naked eye. The presence of
+the clamp has a very strong effect on the final distribution of the
+funding rate, with several adverse consequences:</p>
+<ol type="1">
+<li>The premium signal is polluted.</li>
+</ol>
+<p>Firstly, any premium values inside the clamp do not affect the final
+funding rate in any way, and thus moving the price to change the flow of
+payments becomes more difficult and requires more capital. At this
+point, the premium is negatively affected not only by the hardcoded IR
+but also by the clamp.</p>
+<table>
+<colgroup>
+<col style="width: 17%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 12%" />
+<col style="width: 14%" />
+<col style="width: 12%" />
+<col style="width: 14%" />
+</colgroup>
+<thead>
+<tr>
+<th>Venue</th>
+<th>Mean (8h, %)</th>
+<th>Median (8h, %)</th>
+<th>Mean (bps)</th>
+<th>Median (bps)</th>
+<th>p0.5% (8h)</th>
+<th>p99.5% (8h)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Binance</td>
+<td>−0.030%</td>
+<td>−0.043%</td>
+<td>−2.97</td>
+<td>−4.28</td>
+<td>−0.067%</td>
+<td>0.105%</td>
+</tr>
+<tr>
+<td>Bybit</td>
+<td>−0.027%</td>
+<td>−0.042%</td>
+<td>−2.72</td>
+<td>−4.18</td>
+<td>−0.081%</td>
+<td>0.106%</td>
+</tr>
+<tr>
+<td>Crypto.com</td>
+<td>≈0%</td>
+<td>0.001%</td>
+<td>≈0</td>
+<td>0.13</td>
+<td>−0.086%</td>
+<td>0.094%</td>
+</tr>
+</tbody>
+</table>
+<p>Binance and Bybit premia are negative on average: the perpetual
+trades below the index most of the time, consistent with having to
+absorb a positive fixed anchor in the IR+clamp family. The Crypto.com
+row sits near zero on average by construction over this long window,
+which is correct, since by the definition of perp, it should follow the
+spot price, since the mean spread between these two prices should tend
+to zero. Moreover, it underscores that it is not the same object as the
+Binance/Bybit premium series (see <strong>Appendix C</strong> for the
+alternative <strong>implied</strong> premium from pure funding
+inversion, including Deribit).</p>
+<figure>
+<img src="ir-funding-resources/light/btc_real_premium_distribution_20220101_20260508.png"
+alt="BTC real premium distribution (01 Jan 2022 – 08 May 2026)" />
+<figcaption aria-hidden="true">BTC real premium distribution (01 Jan
+2022 – 08 May 2026)</figcaption>
+</figure>
+<p>It remains important <strong>where the clamp centers the flat funding
+regime</strong>: for Deribit it is <strong>0%</strong> funding in the
+dead zone, while for Binance and Bybit it is <strong>0.01% per
+8h</strong> (~10.95% APR), so the same gap between fair carry and the
+printed anchor implies a different division between premium and the
+constant term.</p>
+<p>Consequently, when the IR is set excessively high, we observe the
+following outcome: the premium must be persistently negative to correct
+the overcharged carry, and this negative bias is indistinguishable from
+directional bearishness. A trader observing the BTC perpetual at a
+-0.03% discount to spot cannot tell whether the market is expressing a
+bearish view or simply counteracting an inflated IR. In principle, the
+IR was supposed to clean up the premium signal, but in the end, a
+miscalibrated IR contaminates it.</p>
+<ol start="2" type="1">
+<li>Misconfigured IR disproportionately subsidizes one side of the
+market.</li>
+</ol>
+<p>When the premium sits within the dead zone, which, as the reader may
+observe, happens frequently, the funding rate is equal to the IR; in our
+case, this is either 0 or 10.95%. In the current rate environment, this
+exceeds the actual cost of capital by roughly 5–7 percentage points (or,
+on the contrary, falls short by about 3–5 pp). In addition, it may be
+suspected that the use of an incorrect formula ultimately affects the
+entire perp market. Because most platforms use an inflated IR with a
+clamp, even venues that do not use this formula see their final funding
+rates increase through arbitrage. Such a situation can be observed in
+the BTC market over the last year.</p>
+<p>As a result, longs pay excessively, while shorts collect this
+surplus, creating a financing rate that lacks a foundation in market
+conditions. The funding payment becomes a yield product for shorts — an
+artificial incentive to hold short exposure that exists solely to
+capture the IR spread. This structurally overstated long→short transfer
+laid the foundation for the creation of protocols such as Ethena and
+Resolv, which earn money on delta-neutral strategies.</p>
+<hr />
+<h2 id="per-asset-ir-estimating-the-carry-anchor-from-money-markets">5.
+Per-asset IR: estimating the carry anchor from money markets</h2>
+<p>The key question is not whether IR should exist, but what IR should
+be for each asset. A single constant can only be correct by
+accident.</p>
+<h3 id="mapping-the-theoretical-term-to-observable-rates">5.1 Mapping
+the theoretical term to observable rates</h3>
+<p>Section 2.2 established the financing structure of the IR term:</p>
+<p><span class="math display">\[
+\iota_t = \frac{r_{a,t} - r_{b,t}}{1 + r_{b,t}} \approx r_{a,t} -
+r_{b,t}
+\]</span></p>
+<p>where <span class="math inline">\(r_{a,t}\)</span> is the
+quote-currency financing rate and <span
+class="math inline">\(r_{b,t}\)</span> is the base-asset financing/yield
+rate over the same horizon. In live money markets, however, each leg has
+two different observable rates (borrow and supply), and they are not
+equal. To map theory to data, we write the transfer terms directly
+through observable rates:</p>
+<p><span class="math display">\[
+I^{L\to
+S}_{t,\text{long}}(x)=\text{BorrowAPR}_{\text{USDC/USDT},t}-\text{SupplyAPR}_{x,t}
+\]</span></p>
+<p><span class="math display">\[
+I^{L\to
+S}_{t,\text{short}}(x)=\text{SupplyAPR}_{\text{USDC/USDT},t}-\text{BorrowAPR}_{x,t}
+\]</span></p>
+<p>The first expression is the long-parity transfer (long perp versus
+financed spot long), while the second is the short-parity transfer
+(short perp versus borrowed-asset short spot). Because borrow APR
+typically exceeds supply APR on both legs, these two values define a
+corridor rather than a single point:</p>
+<p><span class="math display">\[
+I^{L\to S}_{t,\text{short}}(x) \le I_t(x) \le I^{L\to
+S}_{t,\text{long}}(x)
+\]</span></p>
+<p>For implementation, we use the midpoint of this no-arbitrage
+corridor:</p>
+<p><span class="math display">\[
+I^{\text{fair}}_t(x)=\frac{I^{L\to S}_{t,\text{long}}(x)+I^{L\to
+S}_{t,\text{short}}(x)}{2}
+\]</span></p>
+<p>and convert it to 8-hour units via <span
+class="math inline">\(I^{\text{fair}}_{8h}(x)=I^{\text{fair}}_{\text{APR}}(x)/(3\cdot365.25)\)</span>.</p>
+<p>This construction keeps the long-short transfer explicit: positive
+values imply a structural transfer from longs to shorts, while negative
+values imply the opposite direction.</p>
+<h3 id="why-money-market-proxies-are-the-right-benchmark">5.2 Why
+money-market proxies are the right benchmark</h3>
+<p>Money-market rates are not risk-free rates, but they are a relevant
+observable benchmark for the cost of carry. They update continuously,
+are publicly observable on-chain, and price the capital that funds carry
+trades.</p>
+<p>The gap between borrow and supply APR reflects utilization, reserve
+factors, liquidation risk, and protocol fees. This is why we estimate a
+fair-IR corridor before mapping it to a single implementation value. We
+construct that corridor from historical borrow and supply series for
+both the quote leg and the base leg on liquid venues, aggregated daily
+and aligned in time.</p>
+<p>A caveat is that these rate sources do not perfectly match the
+financing model implicit in the IR. The IR is most naturally interpreted
+as the cost of financing a spot position: borrowing quote currency,
+buying the base asset, and carrying that exposure over time. Aave, the
+most liquid DeFi lending venue, operates differently. Borrowers must
+post 130–150%+ collateral, and reserve factors divert part of gross
+interest away from suppliers. This is not the same trade.
+Overcollateralization, utilization pressure, and protocol design can all
+distort observed rates relative to a more capital-efficient funding
+market, and those distortions need not be symmetric across legs. If one
+leg faces stronger collateral demand or greater asset-specific scarcity,
+the midpoint of the corridor can still be biased toward one leg.</p>
+<p>Even so, what the IR needs is not a perfect absolute rate, but an
+estimate of the relative funding differential between quote and base
+assets. DeFi lending markets provide an accessible, continuously quoted
+measure of that differential. If the observable differential
+persistently falls in the 2–4% range while the implementation anchor is
+fixed at 10.95%, the burden is on that anchor to justify why implied
+financing should materially exceed what even imperfect observable
+money-market rates indicate.</p>
+<h3 id="historical-fair-ir-estimates-by-asset">5.3 Historical fair-IR
+estimates by asset</h3>
+<p>Applying this framework to the latest completed windows across venues
+gives a consistent result: fair IR is asset-specific and materially
+below the fixed 10.95% anchor. The table below reports realized corridor
+statistics from the datasets used in this section.</p>
+<table style="width:100%;">
+<colgroup>
+<col style="width: 23%" />
+<col style="width: 10%" />
+<col style="width: 10%" />
+<col style="width: 10%" />
+<col style="width: 10%" />
+<col style="width: 10%" />
+<col style="width: 10%" />
+<col style="width: 10%" />
+</colgroup>
+<thead>
+<tr>
+<th>Asset / venue pair</th>
+<th>Mean borrow quote (APR)</th>
+<th>Mean borrow base (APR)</th>
+<th>Mean supply quote (APR)</th>
+<th>Mean supply base (APR)</th>
+<th>Mean <span class="math inline">\(I_{short}\)</span> (APR)</th>
+<th>Mean <span class="math inline">\(I_{long}\)</span> (APR)</th>
+<th>Midpoint <span class="math inline">\(I^{fair}\)</span> (APR)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ETH (Aave USDT/WETH)</td>
+<td>5.12%</td>
+<td>2.68%</td>
+<td>3.73%</td>
+<td>2.02%</td>
+<td>1.05%</td>
+<td>3.10%</td>
+<td>2.08%</td>
+</tr>
+<tr>
+<td>WBTC (Aave USDT/WBTC)</td>
+<td>5.12%</td>
+<td>0.32%</td>
+<td>3.73%</td>
+<td>0.01%</td>
+<td>3.41%</td>
+<td>5.11%</td>
+<td>4.26%</td>
+</tr>
+</tbody>
+</table>
+<figure>
+<img src="ir-funding-resources/light/eth_ir_corridor_aave_365d.png"
+alt="ETH fair IR corridor from Aave (USDT/WETH)" />
+<figcaption aria-hidden="true">ETH fair IR corridor from Aave
+(USDT/WETH)</figcaption>
+</figure>
+<figure>
+<img src="ir-funding-resources/light/wbtc_ir_corridor_aave_365d.png"
+alt="WBTC fair IR corridor from Aave (USDT/WBTC)" />
+<figcaption aria-hidden="true">WBTC fair IR corridor from Aave
+(USDT/WBTC)</figcaption>
+</figure>
+<h3 id="asset-level-interpretation">5.4 Asset-level interpretation</h3>
+<p>WBTC (as the BTC proxy in this section) is the baseline case: with
+minimal native yield on the base leg, fair IR mostly tracks the
+stablecoin borrowing regime. ETH lowers that carry meaningfully because
+the base leg earns staking yield, so the equalizing IR is in low single
+digits rather than around 11%. Across both assets, a positive universal
+anchor at 10.95% remains mechanically misaligned.</p>
+<h3 id="implication-for-funding-design">5.5 Implication for funding
+design</h3>
+<p>An ideal funding design should calibrate IR as a dynamic, per-asset
+parameter linked to observable money-market rates. A practical
+implementation can use smoothed daily inputs and bounded update rules to
+avoid noisy jumps. Any such mechanism is closer to a no-arbitrage
+structure than a static 2017 constant applied to every asset class.</p>
+<p>The important point is not precision to the second decimal place. The
+important point is directional correctness: BTC &lt; 10.95%, ETH
+materially below 10.95%. Once this ranking is acknowledged, uniform IR
+is no longer defensible as a neutral market standard.</p>
+<h3 id="capital-adjusted-executable-ir-closing-the-loop">5.6
+Capital-adjusted executable IR: closing the loop</h3>
+<p>Sections 5.1-5.5 estimate a fair carry anchor from observable money
+markets. The missing practical step is execution: what rate differential
+must be present before real capital can run the arbitrage after
+collateral constraints and alternative funding costs are included. Here
+we focus only on BTC and let <span class="math inline">\(X\)</span>
+denote USD hedge notional. If <span
+class="math inline">\(\text{LTV}=\text{debt}/\text{collateral}\)</span>,
+posted collateral is <span
+class="math inline">\(C=X/\text{LTV}\)</span>. For one concrete path
+(short BTC perp, externally fund collateral, supply USDC collateral on
+Aave, and borrow BTC on Aave), a practical executable-threshold
+expression is:</p>
+<p><span class="math display">\[
+I^{\text{exec,short}}_{t,\text{APR}}(X)=\frac{r^{\text{TradFi}}_{t,\text{USD}}-s^{\text{Aave}}_{t,\text{USDC}}}{\text{LTV}}+b^{\text{Aave}}_{t,\text{BTC}}+c^{\text{short}}_{\text{fric},t}(X)
+\]</span></p>
+<p>where <span
+class="math inline">\(r^{\text{TradFi}}_{t,\text{USD}}\)</span> is the
+external USD funding/opportunity cost on collateral capital <span
+class="math inline">\(C\)</span>, <span
+class="math inline">\(s^{\text{Aave}}_{t,\text{USDC}}\)</span> is the
+USDC supply APR earned on <span class="math inline">\(C\)</span>, <span
+class="math inline">\(b^{\text{Aave}}_{t,\text{BTC}}\)</span> is the BTC
+borrow APR on Aave, and <span
+class="math inline">\(c^{\text{short}}_{\text{fric},t}(X)\)</span> is a
+path-specific friction premium (typically size-dependent) that
+aggregates execution costs (bridging/transfer latency, margin
+fragmentation, liquidation buffer, smart-contract risk, and fees). Costs
+enter positively and the collateral yield enters as an offset. For
+funding-interval comparisons, convert via <span
+class="math inline">\(I^{\text{exec,short}}_{t,8h}(X)=I^{\text{exec,short}}_{t,\text{APR}}(X)/(3\cdot365.25)\)</span>.</p>
+<p>This term should be interpreted as one executable bound, not as a
+replacement for the theoretical no-arbitrage condition in Section 2.2.
+The fair-IR corridor estimated in Sections 5.1-5.5 describes where carry
+should sit in a frictionless market; the executable threshold describes
+when arbitrage capital is actually induced to enforce that level in a
+specific implementation path. The opposite implementation path has its
+own threshold, so realized funding can remain inside an executable
+corridor around the fair anchor when neither side clears costs.</p>
+<p>Defining edge in this way makes the alternative-cost argument
+measurable. Let <span
+class="math inline">\(FR^{\text{obs}}_{t,8h}(\text{BTC})\)</span> denote
+the observed realized BTC funding rate over the same 8-hour horizon:</p>
+<p><span class="math display">\[
+\alpha^{\text{short}}_{t,8h}(X)=FR^{\text{obs}}_{t,8h}(\text{BTC})-I^{\text{exec,short}}_{t,8h}(X)
+\]</span></p>
+<p>For a concrete scale check, take <span
+class="math inline">\(\text{LTV}=0.75\)</span>, <span
+class="math inline">\(r^{\text{TradFi}}_{\text{USD}}=6\%\)</span>, <span
+class="math inline">\(s^{\text{Aave}}_{\text{USDC}}=4\%\)</span>, <span
+class="math inline">\(b^{\text{Aave}}_{\text{BTC}}=1\%\)</span>, and
+<span
+class="math inline">\(c^{\text{short}}_{\text{fric}}=1.5\%\)</span>.
+Then <span
+class="math inline">\(I^{\text{exec,short}}_{\text{APR}}\approx
+5.16\%\)</span> (about <span class="math inline">\(0.0047\%\)</span> per
+8h). In this setup, observed funding at 4.5% APR can look rich versus
+the fair-IR midpoint estimate in Section 5.3 and still fail to clear the
+executable threshold. When <span
+class="math inline">\(\alpha^{\text{short}}_{t,8h}(X)\le 0\)</span>,
+apparent funding dislocations are not economically actionable. This is
+exactly why funding inefficiencies can persist despite visible
+cross-venue spreads: market participants arbitrage what is executable,
+not what is merely theoretically fair.</p>
+<hr />
+<h2 id="intentional-ir-deviations-in-practice">6. Intentional IR
+deviations in practice</h2>
+<p>Some exchanges have already moved. Three categories of production
+markets show deliberate departures from 0.01%/8h.</p>
+<h3 id="bnb-the-exchange-native-token-exception">6.1 BNB: the
+exchange-native token exception</h3>
+<p>BNB is the most revealing IR deviation case because the economic
+motive extends beyond carry calibration into exchange-level incentive
+design. Both Binance and Aster set IR = 0% for BNB perpetuals, because
+BNB is the main token of this ecosystem.</p>
+<p>A positive IR imposes a baseline cost on long positions through
+funding. Zeroing it removes that cost, making it cheaper to hold long
+BNB perpetual exposure. For an exchange whose native token underpins fee
+discounts, staking rewards, and launchpad access, reducing the cost of
+going long is a direct economic incentive to support token demand. Put
+simply, in this way, Binance and its subsidiary exchange improve the
+conditions for going long on BNB.</p>
+<table>
+<colgroup>
+<col style="width: 6%" />
+<col style="width: 8%" />
+<col style="width: 9%" />
+<col style="width: 11%" />
+<col style="width: 19%" />
+<col style="width: 19%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+</colgroup>
+<thead>
+<tr>
+<th>Asset</th>
+<th>IR (8h)</th>
+<th>Mean APR</th>
+<th>Median APR</th>
+<th>Share at 0.01% (8h)</th>
+<th>Share at 0.00% (8h)</th>
+<th>P05 (8h)</th>
+<th>P95 (8h)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>BNB</td>
+<td>0%</td>
+<td>0.88%</td>
+<td>0.00%</td>
+<td>0.37%</td>
+<td>69.13%</td>
+<td>-0.002859%</td>
+<td>0.009902%</td>
+</tr>
+<tr>
+<td>BTC</td>
+<td>0.01%</td>
+<td>3.70%</td>
+<td>4.08%</td>
+<td>13.06%</td>
+<td>1.19%</td>
+<td>-0.005391%</td>
+<td>0.010000%</td>
+</tr>
+<tr>
+<td>ETH</td>
+<td>0.01%</td>
+<td>3.32%</td>
+<td>3.96%</td>
+<td>14.52%</td>
+<td>1.37%</td>
+<td>-0.007123%</td>
+<td>0.010000%</td>
+</tr>
+</tbody>
+</table>
+<p>BTC and ETH exhibit the dead-zone stickiness at 0.01%, documented in
+Section 4 (roughly low-teens percentage of observations). BNB’s spike
+sits at 0.00% instead — <strong>around 69% of observations land at
+exactly zero</strong> — because with IR = 0%, the dead zone is centered
+on zero rather than on 0.01%. Trailing-window mean APR for BNB is mildly
+positive (~0.9% annualized): the distribution stays concentrated at zero
+funding, while small positive skew dominates the arithmetic mean versus
+the prior sample regime.</p>
+<figure>
+<img src="ir-funding-resources/light/section6_bnb_distribution.png"
+alt="Binance BNBUSDT Funding Rate Distribution (IR = 0%)" />
+<figcaption aria-hidden="true">Binance BNBUSDT Funding Rate Distribution
+(IR = 0%)</figcaption>
+</figure>
+<p>With IR = 0%, premium values in <span
+class="math inline">\([-0.05\%,\ +0.05\%]\)</span> all map to <span
+class="math inline">\(F = 0\%\)</span>. The distribution confirms the
+parameter change works as designed: the spike moves from 0.01% to 0.00%,
+and the premium signal is freed from having to offset a misaligned
+anchor.</p>
+<h3 id="fully-crypto-pairs-ethbtc">6.2 Fully crypto pairs: ETHBTC</h3>
+<p>When both legs of a perpetual are crypto assets, the standard
+USD-vs-crypto carry logic breaks down entirely. The IR component in the
+BitMEX formula was designed to capture the difference between the USD
+interest rate and the BTC interest rate. For a pair like ETHBTC (where
+the quote currency is BTC, not USD), the relevant carry differential is
+the ETH-vs-BTC borrow spread, which has no relationship to the 0.01%/8h
+constant.</p>
+<p>Binance recognizes this and does not set IR = 10.95%; instead, it
+sets IR to 0%. Presumably, the explanation for this logic is Binance’s
+assumption that the interest rates for ETH and BTC are the same, so the
+cost of carry is equal to 0; however, in Section 5.3 we have already
+examined the interest rates of these assets, and this assumption is
+incorrect. Nevertheless, it is already encouraging that there are
+exchanges that consider each market separately and set parameters based
+on some logic, and not on an anachronism from 2017.</p>
+<h3 id="rwa-markets-three-venues-three-approaches">6.3 RWA markets:
+three venues, three approaches</h3>
+<p>Real-world asset perpetuals are the cleanest test case for IR
+calibration. Unlike crypto assets, where the cost of carry must be
+estimated from on-chain lending markets or inferred from funding itself,
+traditional asset classes have unambiguous carry structures anchored in
+central bank rates, dividend yields, and deep forward markets. Three
+venues — Binance, XYZ (trade.xyz on Hyperliquid), and Lighter — have
+each chosen a different IR calibration for their RWA markets. None of
+them gets it right for all asset classes, but each reveals a different
+failure mode of the uniform-constant approach.</p>
+<p>First of all, let’s recall how we should calculate fair IR from the
+cost of carry: Section 1 established that the fair basis on a futures
+contract is <span class="math inline">\(S \cdot (e^{(r-y)T}-1)\)</span>,
+where <span class="math inline">\(r\)</span> is the financing rate and
+<span class="math inline">\(y\)</span> is the asset’s yield. Translating
+this into a perpetual IR is straightforward: the IR should approximate
+<span class="math inline">\(r - y\)</span> in annualized terms, since
+the perpetual has no fixed maturity. For non-crypto assets in the
+current rate environment (SOFR yield ~3.6%, €STR ~1.9%):</p>
+<ol type="1">
+<li>Commodities: no native yield (<span class="math inline">\(y =
+0\)</span>), so fair IR <span class="math inline">\(\approx
+r_{\text{USD}} \approx 3.6\%\)</span> APR. This is the same logic that
+produces positive basis on COMEX gold futures - the entire financing
+cost passes through as carry.</li>
+<li>Equities:
+<ul>
+<li>No-dividend (e.g. TSLA, AMZN): same structure as commodities - <span
+class="math inline">\(y = 0\)</span>, fair IR <span
+class="math inline">\(\approx 3.6\%\)</span> APR.</li>
+<li>Dividend-paying stocks reduce fair IR by the dividend yield.
+Illustrative example: if AAPL’s dividend yield is about <span
+class="math inline">\(0.4\%\)</span>, then with <span
+class="math inline">\(r_{\text{USD}} \approx 3.6\%\)</span> the fair IR
+is <span class="math inline">\(r-y_{\text{div}} \approx 3.6\% - 0.4\% =
+3.2\%\)</span> APR.</li>
+</ul></li>
+<li>FX: covered interest rate parity gives fair IR <span
+class="math inline">\(= r_{\text{USD}} - r_{\text{EUR}} \approx 3.6\% -
+1.9\% \approx 1.7\%\)</span> APR. For GBP/USD, the differential is near
+zero (<span class="math inline">\(r_{\text{GBP}} \approx
+3.7\%\)</span>). For JPY/USD, it would be ~3% (<span
+class="math inline">\(r_{\text{JPY}} \approx 0.7\%\)</span>). Each FX
+pair has a different fair IR by construction; CIP (covered interest
+parity) is the most precisely observable carry relationship in all of
+finance.</li>
+</ol>
+<p>Comparing how exchanges set IR against these fair-value benchmarks
+reveals a clear trend: instead of using a single outdated constant, each
+venue substitutes a different constant, which may be closer to correct
+but remains a one-size-fits-all solution.</p>
+<table>
+<thead>
+<tr>
+<th>Asset class</th>
+<th style="text-align: center;">Fair IR (APR)</th>
+<th style="text-align: center;">Binance</th>
+<th style="text-align: center;">XYZ (0.5×)</th>
+<th style="text-align: center;">Lighter</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Commodities (gold)</td>
+<td style="text-align: center;">~3.6%</td>
+<td style="text-align: center;">0%</td>
+<td style="text-align: center;">5.48%</td>
+<td style="text-align: center;">3.51%</td>
+</tr>
+<tr>
+<td>Equities (TSLA, no div.)</td>
+<td style="text-align: center;">~3.6%</td>
+<td style="text-align: center;">0%</td>
+<td style="text-align: center;">5.48%</td>
+<td style="text-align: center;">3.51%</td>
+</tr>
+<tr>
+<td>Equities (AAPL, div.)</td>
+<td style="text-align: center;">~3.2%</td>
+<td style="text-align: center;">0%</td>
+<td style="text-align: center;">5.48%</td>
+<td style="text-align: center;">3.51%</td>
+</tr>
+<tr>
+<td>FX (EUR/USD)</td>
+<td style="text-align: center;">~1.7%</td>
+<td style="text-align: center;">-</td>
+<td style="text-align: center;">5.48%</td>
+<td style="text-align: center;">0%</td>
+</tr>
+</tbody>
+</table>
+<p>Binance sets IR = 0% for all non-crypto assets: this is a sweeping
+acknowledgment that 10.95% is arbitrary for non-crypto assets, but the
+correction overshoots: zeroing the IR for gold ignores ~3.6% of real
+financing cost, shifting the dead zone to center on zero rather than on
+the fair carry rate. The formula remains identical; only the IR input
+changes.</p>
+<p>XYZ sets a 0.5× multiplier on everything: they apply a 0.5×
+multiplier to the baseline funding rate formula for all of their markets
+— stocks, commodities, forex, and indices [10]. The documentation is
+unusually explicit: “This reduces baseline funding from a default of
+~11% annualized to ~5.5%, better reflecting carry costs of traditional
+asset classes (typically closer to SOFR + 1-2%).” This is the most
+direct carry-calibration statement in any venue’s public documentation -
+it names the benchmark (SOFR), quantifies the target range, and explains
+why the crypto default is wrong. The 5.48% effective IR is close to fair
+for commodities (~3.6%) but overstates FX carry.</p>
+<p>Lighter differentiates FX from non-FX, setting IR = 0.32 bp/8h
+(~3.51% APR) for commodity and equity perpetuals and IR = 0% for FX
+pairs [12]. This is the only venue that explicitly distinguishes between
+asset class categories - a meaningful structural improvement. The 3.51%
+rate for commodities and equities is the closest to fair carry of the
+three venues, while the 0% for FX undershoots the EUR/USD
+differential.</p>
+<hr />
+<h2 id="conclusion">7. Conclusion</h2>
+<p>In this article, we examined the problems and consequences of the
+fact that perp exchanges decided not to bother and took the simple path
+- to use the old constant, which was justified by the market of 2017.
+This value still affects the market, making shorts a more profitable
+side for trading than longs. In addition, we examined the problems of
+the main formula, which is used by the vast majority of platforms, and
+found that it negatively affects basis and premium.</p>
+<p>How to fix the situation?</p>
+<ol type="1">
+<li>Do not use the clamp in the formula; it only limits the normal
+distribution of funding rate payments. Although the clamp makes funding
+rate payments more stable, it disrupts the distribution of those
+payments and worsens the convergence of spot and perp prices.</li>
+<li>Set IR on a per-market basis, and do not try to use one constant for
+all markets at once. This may seem complicated at first, so perhaps it
+is worth starting with the largest markets, such as BTC, ETH, and SOL,
+as they make up the largest share of the perp market. For the other
+markets, at first it is worth simply setting SOFR, since for the
+overwhelming majority of markets it is quite difficult to find a
+high-quality risk-free rate.</li>
+</ol>
+<hr />
+<h2 id="appendix-a.-eth-cross-venue-diagnostics">Appendix A. ETH
+cross-venue diagnostics</h2>
+<h3 id="a.1-eth-funding-by-formula-family">A.1 ETH funding by formula
+family</h3>
+<table>
+<colgroup>
+<col style="width: 14%" />
+<col style="width: 10%" />
+<col style="width: 12%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+</colgroup>
+<thead>
+<tr>
+<th>Venue</th>
+<th>Mean APR</th>
+<th>Median APR</th>
+<th>Share at 0.01% (8h)</th>
+<th>Share at 0.00% (8h)</th>
+<th>P05 funding (8h)</th>
+<th>P95 funding (8h)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Binance</td>
+<td>6.45%</td>
+<td>7.16%</td>
+<td>29.41%</td>
+<td>0.61%</td>
+<td>-0.006759%</td>
+<td>0.016673%</td>
+</tr>
+<tr>
+<td>Bybit</td>
+<td>6.77%</td>
+<td>9.74%</td>
+<td>40.53%</td>
+<td>0.61%</td>
+<td>-0.007603%</td>
+<td>0.017762%</td>
+</tr>
+<tr>
+<td>Deribit</td>
+<td>2.71%</td>
+<td>0.34%</td>
+<td>0.20%</td>
+<td>17.55%</td>
+<td>-0.009226%</td>
+<td>0.025312%</td>
+</tr>
+<tr>
+<td>Crypto.com</td>
+<td>2.33%</td>
+<td>-0.44%</td>
+<td>0.40%</td>
+<td>0.80%</td>
+<td>-0.016944%</td>
+<td>0.032040%</td>
+</tr>
+</tbody>
+</table>
+<p>For comparability with Section 3.3, the strict
+<strong>six-venue</strong> rollup is duplicated here:</p>
+<table>
+<colgroup>
+<col style="width: 14%" />
+<col style="width: 10%" />
+<col style="width: 12%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+</colgroup>
+<thead>
+<tr>
+<th>Venue</th>
+<th>Mean APR</th>
+<th>Median APR</th>
+<th>Share at 0.01% (8h)</th>
+<th>Share at 0.00% (8h)</th>
+<th>P05 funding (8h)</th>
+<th>P95 funding (8h)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Binance</td>
+<td>3.35%</td>
+<td>4.01%</td>
+<td>14.60%</td>
+<td>0.91%</td>
+<td>-0.007017%</td>
+<td>0.010000%</td>
+</tr>
+<tr>
+<td>Bybit</td>
+<td>3.68%</td>
+<td>4.36%</td>
+<td>25.36%</td>
+<td>0.91%</td>
+<td>-0.006726%</td>
+<td>0.010000%</td>
+</tr>
+<tr>
+<td>Deribit</td>
+<td>1.33%</td>
+<td>0.11%</td>
+<td>0.36%</td>
+<td>26.92%</td>
+<td>-0.004725%</td>
+<td>0.010025%</td>
+</tr>
+<tr>
+<td>Crypto.com</td>
+<td>0.65%</td>
+<td>0.95%</td>
+<td>0.55%</td>
+<td>0.64%</td>
+<td>-0.016646%</td>
+<td>0.016821%</td>
+</tr>
+<tr>
+<td>Hyperliquid</td>
+<td>8.19%</td>
+<td>10.41%</td>
+<td>33.21%</td>
+<td>0.46%</td>
+<td>-0.007026%</td>
+<td>0.022043%</td>
+</tr>
+<tr>
+<td>Lighter</td>
+<td>8.66%</td>
+<td>10.52%</td>
+<td>0.64%</td>
+<td>0.18%</td>
+<td>-0.007100%</td>
+<td>0.022725%</td>
+</tr>
+</tbody>
+</table>
+<p>In this recent ETH window, convergence is strong for the two large
+IR+clamp venues (Binance/Bybit), while Deribit and Crypto.com remain at
+lower mean APR levels. This keeps the cross-family distinction visible
+even in a more mature market regime.</p>
+<figure>
+<img src="ir-funding-resources/light/eth_formula_family_distribution_2022_2026.png"
+alt="ETH funding rate distribution by formula family (01 Jan 2022 – 07 May 2026)" />
+<figcaption aria-hidden="true">ETH funding rate distribution by formula
+family (01 Jan 2022 – 07 May 2026)</figcaption>
+</figure>
+<figure>
+<img src="ir-funding-resources/light/eth_funding_apr_30d_2022_2026.png"
+alt="ETH funding APR (30-day rolling mean) by venue (01 Jan 2022 – 07 May 2026)" />
+<figcaption aria-hidden="true">ETH funding APR (30-day rolling mean) by
+venue (01 Jan 2022 – 07 May 2026)</figcaption>
+</figure>
+<h3 id="a.2-eth-implied-premium-decomposition">A.2 ETH implied premium
+decomposition</h3>
+<table>
+<thead>
+<tr>
+<th>Venue</th>
+<th>Active share (2022+, %)</th>
+<th>Mean implied premium (2022+, bps)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Binance</td>
+<td>70.59%</td>
+<td>-3.60</td>
+</tr>
+<tr>
+<td>Bybit</td>
+<td>59.47%</td>
+<td>-3.54</td>
+</tr>
+<tr>
+<td>Deribit</td>
+<td>82.45%</td>
+<td>1.15</td>
+</tr>
+<tr>
+<td>Crypto.com</td>
+<td>100.00%</td>
+<td>-0.15</td>
+</tr>
+</tbody>
+</table>
+<figure>
+<img src="ir-funding-resources/light/eth_implied_premium_distribution_2022_2026.png"
+alt="ETH implied premium distribution (01 Jan 2022 – 07 May 2026)" />
+<figcaption aria-hidden="true">ETH implied premium distribution (01 Jan
+2022 – 07 May 2026)</figcaption>
+</figure>
+<h2
+id="appendix-b.-btc-nominal-latest-365-distribution-supplement">Appendix
+B. BTC nominal latest-365 distribution supplement</h2>
+<p><strong>Strict four-CEX common-end summary (BTC):</strong></p>
+<table style="width:100%;">
+<colgroup>
+<col style="width: 17%" />
+<col style="width: 8%" />
+<col style="width: 10%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 12%" />
+<col style="width: 14%" />
+</colgroup>
+<thead>
+<tr>
+<th>Venue</th>
+<th>Mean APR</th>
+<th>Median APR</th>
+<th>Share at 0.01% (8h)</th>
+<th>Share at 0.00% (8h)</th>
+<th>P05 funding (8h)</th>
+<th>P95 funding (8h)</th>
+<th>Positive share (8h)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Binance</td>
+<td>3.67%</td>
+<td>4.02%</td>
+<td>13.50%</td>
+<td>1.73%</td>
+<td>-0.005613%</td>
+<td>0.010000%</td>
+<td>77.01%</td>
+</tr>
+<tr>
+<td>Bybit</td>
+<td>4.14%</td>
+<td>4.27%</td>
+<td>22.81%</td>
+<td>1.28%</td>
+<td>-0.004746%</td>
+<td>0.010000%</td>
+<td>75.00%</td>
+</tr>
+<tr>
+<td>Deribit</td>
+<td>4.32%</td>
+<td>1.11%</td>
+<td>0.09%</td>
+<td>17.88%</td>
+<td>-0.001932%</td>
+<td>0.017911%</td>
+<td>72.99%</td>
+</tr>
+<tr>
+<td>Crypto.com</td>
+<td>3.26%</td>
+<td>3.28%</td>
+<td>0.82%</td>
+<td>0.64%</td>
+<td>-0.013237%</td>
+<td>0.019706%</td>
+<td>63.14%</td>
+</tr>
+</tbody>
+</table>
+<figure>
+<img
+src="ir-funding-resources/light/btc_formula_family_distribution_2025_2026_latest365.png"
+alt="BTC formula-family distribution (08 May 2025 – 08 May 2026)" />
+<figcaption aria-hidden="true">BTC formula-family distribution (08 May
+2025 – 08 May 2026)</figcaption>
+</figure>
+<hr />
+<h2
+id="appendix-c.-btc-implied-premium-from-funding-inversion-supplement">Appendix
+C. BTC implied premium from funding inversion (supplement)</h2>
+<p>One can recover an implied premium by inverting each venue’s funding
+formula outside non-identifiable regions (e.g. dead zones).</p>
+<table>
+<thead>
+<tr>
+<th>Venue</th>
+<th style="text-align: right;">Active share (%)</th>
+<th style="text-align: right;">Mean implied premium (bps)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Binance</td>
+<td style="text-align: right;">69.95</td>
+<td style="text-align: right;">−3.71</td>
+</tr>
+<tr>
+<td>Bybit</td>
+<td style="text-align: right;">60.94</td>
+<td style="text-align: right;">−3.64</td>
+</tr>
+<tr>
+<td>Deribit</td>
+<td style="text-align: right;">82.08</td>
+<td style="text-align: right;">1.93</td>
+</tr>
+<tr>
+<td>Crypto.com</td>
+<td style="text-align: right;">100.00</td>
+<td style="text-align: right;">−0.02</td>
+</tr>
+</tbody>
+</table>
+<p>The sign pattern parallels the real premium table in Section 4.1 for
+Binance and Bybit (negative implied premium vs negative measured
+premium). Deribit appears only in this inversion: implied premium is
+positive on average, consistent with carry expressed through premium
+without a Binance-style IR offset. Crypto.com is near neutral on average
+over the long window.</p>
+<figure>
+<img src="ir-funding-resources/light/btc_implied_premium_distribution_2022_2026.png"
+alt="BTC implied premium distribution (funding inversion)" />
+<figcaption aria-hidden="true">BTC implied premium distribution (funding
+inversion)</figcaption>
+</figure>
+<hr />
+<h2 id="references">References</h2>
+<p>[1] Ackerer, Damien and Hugonnier, Julien and Jermann, Urban.
+“Perpetual Futures Pricing.” National Bureau of Economic Research, 2024.
+https://www.nber.org/papers/w32936</p>
+<p>[2] BitMEX. “Bitcoin / USD Swap Funding Rate Calculation Changes.”
+BitMEX Blog, 2017.
+https://blog.bitmex.com/bitcoin-usd-swap-funding-rate-calculation-changes/</p>
+<p>[3] Binance. “Introduction to Binance Futures Funding Rates.” Binance
+Support, 2026.
+https://www.binance.com/en/support/faq/introduction-to-binance-futures-funding-rates-360033525031</p>
+<p>[4] Binance. “Important Updates on Funding Rate Settlement Frequency
+of USD-M Perpetual Contracts.” Binance Announcement, 2025.
+https://www.binance.info/en/support/announcement/detail/3243c81a35bd4f0c86a37315c3dc96cc</p>
+<p>[5] Bybit. “Introduction to Funding Rate.” Bybit Help Center, 2026.
+https://www.bybit.com/en/help-center/article/What-is-funding-rate-and-predicted-rate</p>
+<p>[6] OKX. “Funding Fee Mechanism.” OKX Support, 2026.
+https://www.okx.com/help/iv-introduction-to-perpetual-swap-funding-fee</p>
+<p>[7] Deribit. “Funding Rate History API.” Deribit Documentation, 2026.
+https://docs.deribit.com/api-reference/market-data/public-get_funding_rate_history</p>
+<p>[8] Crypto.com. “Funding and Session Settlement.” Crypto.com Help
+Center, 2026.
+https://help.crypto.com/en/articles/4894449-funding-and-session-settlement</p>
+<p>[9] Hyperliquid. “Funding.” Hyperliquid Documentation, 2026.
+https://hyperliquid.gitbook.io/hyperliquid-docs/trading/funding</p>
+<p>[10] trade.xyz. “Funding.” trade.xyz Documentation, 2026.
+https://docs.trade.xyz/perp-mechanics/funding</p>
+<p>[11] Aster. “Funding Rate.” Aster Documentation, 2026.
+https://docs.asterdex.com/product/aster-perpetuals/fees-and-specs/funding-rate</p>
+<p>[12] Lighter. “Funding.” Lighter Documentation, 2026.
+https://docs.lighter.xyz/trading/funding</p>
+<p>[13] Extended Exchange. “Funding Payments.” Extended Exchange
+Documentation, 2026.
+https://docs.extended.exchange/extended-resources/trading/funding-payments</p>
+<p>[14] Paradex. “Funding Mechanism.” Paradex Documentation, 2026.
+https://docs.paradex.trade/risk/funding-mechanism</p>
+<p>[15] Variational. “Funding Rates.” Variational Documentation, 2026.
+https://docs.variational.io/omni/trading/funding-rates</p>
+<p>[16] EdgeX. “Funding Fees.” EdgeX Documentation, 2026.
+https://edgex-1.gitbook.io/edgeX-documentation/trading/funding-fees</p>
+<p>[17] Jupiter. “How Jupiter Perps Works.” Jupiter Documentation, 2026.
+https://station.jup.ag/guides/perpetual-exchange/how-it-works</p>
+<p>[18] Aave. “Borrow Interest Rate.” Aave Documentation, 2026.
+https://docs.aave.com/risk/liquidity-risk/borrow-interest-rate</p>
+<p>[19] Pendle. “Boros Overview.” Pendle Boros Documentation, 2026.
+https://pendle.gitbook.io/boros/boros-docs</p>
+        <hr />
+        <p class="muted">
+          <a href="/stuff.html">← Back to Stuff</a>
+        </p>
+      </article>
+    </main>
+    <footer>© 2026 Ramil Amirov</footer>
+  </div>
+  <script src="/assets/theme.js" defer></script>
+  <script>
+    // Swap figure PNGs between light and dark variants when the site theme
+    // toggles. Each chart lives in two parallel directories:
+    //   ir-funding-resources/light/foo.png  (white background, default)
+    //   ir-funding-resources/dark/foo.png   (pure-black background)
+    // The script flips the "/light/" / "/dark/" segment of img.src to match
+    // document.documentElement.dataset.theme.
+    (function () {
+      function applyImageTheme() {
+        var isDark = document.documentElement.dataset.theme !== "light";
+        document.querySelectorAll("article img").forEach(function (img) {
+          var src = img.getAttribute("data-light-src");
+          if (!src) {
+            src = img.src.replace(
+              /(ir-funding-resources)\/dark\//,
+              "$1/light/"
+            );
+            img.setAttribute("data-light-src", src);
+          }
+          var target = isDark
+            ? src.replace(/(ir-funding-resources)\/light\//, "$1/dark/")
+            : src;
+          if (img.src !== target) img.src = target;
+        });
+      }
+      applyImageTheme();
+      new MutationObserver(applyImageTheme).observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ["data-theme"],
+      });
+    })();
+  </script>
+</body>
+</html>
